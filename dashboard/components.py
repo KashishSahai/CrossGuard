@@ -3,13 +3,26 @@ CrossGuard Reusable Presentation Components
 ===========================================
 High-tech command center visual primitives: illuminated headers, metric cards,
 radar pulses, traffic signal heads, empty-state containers, and Plotly cyber themes.
+Uses centralized HTML rendering to eliminate raw markup escaping and code-block defects.
 """
 
 import os
+import textwrap
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
+
+
+def render_html(html_str: str) -> None:
+    """
+    Renders pure HTML into the Streamlit DOM without Markdown parsing interference.
+    Strips leading indentation from multi-line strings to ensure valid HTML parsing.
+    """
+    if not html_str:
+        return
+    cleaned = textwrap.dedent(html_str).strip()
+    st.html(cleaned)
 
 
 def inject_custom_theme() -> None:
@@ -18,13 +31,16 @@ def inject_custom_theme() -> None:
     if os.path.exists(css_path):
         with open(css_path, "r", encoding="utf-8") as f:
             css_content = f.read()
-        st.markdown(f"<style>{css_content}</style>", unsafe_allow_html=True)
+        render_html(f"<style>{css_content}</style>")
 
 
 def render_top_command_bar(
     active_page_title: str,
     video_loaded: bool = False,
     video_name: Optional[str] = None,
+    fsm_state_label: Optional[str] = None,
+    ai_status_label: Optional[str] = None,
+    ai_badge_class: str = "cyan",
 ) -> None:
     """
     Renders a compact top surveillance status bar with live pulse indicator,
@@ -33,6 +49,24 @@ def render_top_command_bar(
     pulse_class = "pulse-dot" if video_loaded else "pulse-dot warning"
     video_status_str = f"FEED: {video_name}" if video_loaded else "FEED: NO STREAM LOADED"
     video_badge_class = "active" if video_loaded else "warning"
+
+    if fsm_state_label and video_loaded:
+        fsm_badge = f'<span class="status-pill lavender">FSM: {fsm_state_label}</span>'
+    elif fsm_state_label:
+        fsm_badge = f'<span class="status-pill neutral">FSM: {fsm_state_label}</span>'
+    else:
+        fsm_badge = '<span class="status-pill neutral">FSM: STANDBY</span>'
+
+    if ai_status_label is None:
+        if video_loaded:
+            ai_status = "AI PIPELINE READY"
+            ai_badge = "cyan"
+        else:
+            ai_status = "AI PIPELINE IDLE"
+            ai_badge = "neutral"
+    else:
+        ai_status = ai_status_label
+        ai_badge = ai_badge_class
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -49,13 +83,14 @@ def render_top_command_bar(
             </span>
         </div>
         <div class="top-bar-right">
+            {fsm_badge}
             <span class="status-pill {video_badge_class}">{video_status_str}</span>
-            <span class="status-pill cyan">STAGE 1 FOUNDATION</span>
+            <span class="status-pill {ai_badge}">{ai_status}</span>
             <span style="color: #94A3B8; font-size: 0.8rem;">{now_str}</span>
         </div>
     </div>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    render_html(html)
 
 
 def render_hud_header(
@@ -83,7 +118,7 @@ def render_hud_header(
         </div>
     </div>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    render_html(html)
 
 
 def render_metric_card(
@@ -94,9 +129,7 @@ def render_metric_card(
     status_color: str = "cyan",
     delta: Optional[str] = None,
 ) -> None:
-    """
-    Renders a compact information-rich HUD metric container.
-    """
+    """Renders a compact information-rich HUD metric container."""
     delta_html = ""
     if delta:
         delta_html = f'<span style="font-size: 0.75rem; color: #10B981; margin-left: 6px;">{delta}</span>'
@@ -113,7 +146,7 @@ def render_metric_card(
         <div class="subtext">{subtext}</div>
     </div>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    render_html(html)
 
 
 def render_status_badge(text: str, badge_type: str = "neutral") -> str:
@@ -127,6 +160,7 @@ def render_traffic_signal_head(
     green_active: bool = False,
     ped_state: str = "WAIT",
     countdown: str = "--",
+    phase_label: str = "PHASE 2 ARTERIAL",
 ) -> None:
     """
     Renders a realistic digital traffic signal head with glowing lenses,
@@ -143,7 +177,7 @@ def render_traffic_signal_head(
     html = f"""
     <div class="hud-card" style="display: flex; flex-direction: column; align-items: center; padding: 18px;">
         <div style="font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.1em; color: #94A3B8; margin-bottom: 12px; text-transform: uppercase;">
-            SIGNAL HEAD // PHASE 2 ARTERIAL
+            SIGNAL HEAD // {phase_label}
         </div>
         <div class="traffic-signal-box">
             <div class="{r_class}" title="Red Phase"></div>
@@ -162,18 +196,16 @@ def render_traffic_signal_head(
         </div>
     </div>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    render_html(html)
 
 
 def render_empty_state_card(
     icon_symbol: str,
     title: str,
     description: str,
-    stage_tag: str = "Stage 2 Pending",
+    stage_tag: str = "Awaiting Video Data",
 ) -> None:
-    """
-    Renders an informative empty state container when real data/model is not yet integrated.
-    """
+    """Renders an informative empty state container when real data is not yet recorded."""
     html = f"""
     <div class="empty-state-container">
         <div class="empty-state-icon">{icon_symbol}</div>
@@ -182,14 +214,48 @@ def render_empty_state_card(
         <span class="status-pill lavender">{stage_tag}</span>
     </div>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    render_html(html)
+
+
+def render_tech_table(
+    headers: List[str],
+    rows: List[List[str]],
+    caption: str = "",
+) -> None:
+    """
+    Renders an information-dense cyber table safely without Markdown indentation glitches.
+    """
+    th_cells = "".join([f"<th>{h}</th>" for h in headers])
+    tr_rows = []
+    for row in rows:
+        td_cells = "".join([f"<td>{cell}</td>" for cell in row])
+        tr_rows.append(f"<tr>{td_cells}</tr>")
+    tbody_content = "".join(tr_rows)
+
+    caption_html = (
+        f'<div style="font-family: var(--font-mono); font-size: 0.75rem; color: #94A3B8; margin-bottom: 8px;">{caption}</div>'
+        if caption
+        else ""
+    )
+
+    html = f"""
+    <div class="hud-card" style="padding: 10px 14px; overflow-x: auto;">
+        {caption_html}
+        <table class="tech-table">
+            <thead>
+                <tr>{th_cells}</tr>
+            </thead>
+            <tbody>
+                {tbody_content}
+            </tbody>
+        </table>
+    </div>
+    """
+    render_html(html)
 
 
 def get_command_centre_plotly_layout(title: str = "", height: int = 300) -> Dict[str, Any]:
-    """
-    Generates a uniform futuristic Plotly dark layout conforming to the
-    CrossGuard neon cyan/charcoal design specification.
-    """
+    """Generates a uniform futuristic Plotly dark layout."""
     return {
         "title": {
             "text": title,

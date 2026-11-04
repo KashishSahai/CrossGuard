@@ -80,4 +80,9 @@ def test_all_six_pages_with_apptest():
         nav_radio.set_value(opt)
         at.run()
         assert len(at.exception) == 0, f"Exception rendered on page option: {opt}"
+        # Assert no raw table or block tags leaked into markdown text elements
+        for md in at.markdown:
+            assert "<tr>" not in md.value, f"Raw <tr> string leaked in markdown on page {opt}: {md.value[:100]}"
+            assert "<td>" not in md.value, f"Raw <td> string leaked in markdown on page {opt}: {md.value[:100]}"
+
 

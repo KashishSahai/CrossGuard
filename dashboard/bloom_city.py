@@ -1,163 +1,187 @@
 """
 CrossGuard - Bloom City Digital Twin Simulation Workspace
 =========================================================
-Hosts the digital twin intersection simulator viewport, communication bridge
-status, viewport camera selection, and environmental controls for Stage 3.
+Hosts the microscopic 2D intersection digital twin with a distinctive pastel aesthetic.
+Synchronizes vehicle queues, pedestrian platoons, and traffic signals directly with
+real-time video detection and adaptive FSM decisions.
 """
 
 import streamlit as st
+
+from core.adaptive_controller import ControllerDecision, SignalPhase
+from core.session_manager import SessionStatus, VideoSession
+from core.spatial_analysis import SpatialSnapshot
 from dashboard.components import (
     render_empty_state_card,
+    render_html,
     render_hud_header,
     render_metric_card,
     render_status_badge,
 )
+from simulation.bloom_city_engine import BloomCityEngine
 
 
 def render_bloom_city_page() -> None:
     """Renders the Bloom City Digital Twin intersection simulation workspace."""
+    session: VideoSession = st.session_state["video_session"]
+
     render_hud_header(
         title="Bloom City // Digital Twin Intersection Simulator",
         subtitle="Microscopic pedestrian-priority urban traffic simulation workspace",
-        badge_text="SIMULATOR // STAGE 3 PENDING",
-        badge_type="lavender",
+        badge_text="SYNCHRONIZED" if session.processed_frames_count > 0 else "AWAITING TELEMETRY",
+        badge_type="active" if session.processed_frames_count > 0 else "neutral",
     )
 
-    # Simulator Connection Status Bar
-    st.markdown(
-        """
-        <div class="hud-card lavender-accent" style="padding: 14px 20px; margin-bottom: 20px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <span class="pulse-dot warning"></span>
+    bloom_engine: BloomCityEngine = session.bloom_engine
+    snapshot: SpatialSnapshot = session.latest_snapshot
+    decision: ControllerDecision = session.latest_decision
+    has_video = session.video_path is not None
+    has_processed = session.processed_frames_count > 0
+
+    # Bridge Connection Telemetry Bar
+    if has_processed:
+        bridge_badge = "active"
+        bridge_status = f"VIDEO TELEMETRY LINKED (Frame #{session.current_frame_idx})"
+    elif has_video:
+        bridge_badge = "lavender"
+        bridge_status = "VIDEO LOADED // AWAITING PROCESSING"
+    else:
+        bridge_badge = "warning"
+        bridge_status = "NO VIDEO STREAM LOADED"
+
+    render_html(
+        f"""
+        <div class="hud-card cyan-accent" style="padding: 12px 18px; margin-bottom: 18px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span class="pulse-dot {'active' if has_processed else 'warning'}"></span>
                     <div>
-                        <div style="font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; color: #F8FAFC;">
-                            SIMULATION ENGINE BRIDGE: DISCONNECTED
+                        <div style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; color: #F8FAFC;">
+                            SIMULATION BRIDGE: {bridge_status}
                         </div>
                         <div style="font-size: 0.75rem; color: #94A3B8;">
-                            Sector 7: Bloom Ave & Aurora Blvd (4-Way Dual Crosswalk Node)
+                            Sector 7: Bloom Ave & Aurora Blvd (Adaptive Pedestrian-Priority Node)
                         </div>
                     </div>
                 </div>
                 <div style="display: flex; gap: 10px; align-items: center; font-family: var(--font-mono); font-size: 0.78rem;">
-                    <div><span style="color: #64748B;">PROTOCOL:</span> <span style="color: #CBD5E1;">WebSocket / Local Socket</span></div>
-                    <div><span style="color: #64748B;">SYNC CLOCK:</span> <span style="color: #00F0FF;">00:00:00 (HALTED)</span></div>
-                    <span class="status-pill warning">STAGE 3 INTEGRATION</span>
+                    <div><span style="color: #64748B;">CONTROLLER PHASE:</span> <strong style="color: #00F0FF;">{decision.current_phase.value}</strong></div>
+                    <div><span style="color: #64748B;">COUNTDOWN:</span> <strong style="color: #A78BFA;">{decision.phase_remaining_seconds:.0f}s</strong></div>
+                    <span class="status-pill {bridge_badge}">BRIDGE {session.status.value}</span>
                 </div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
-    # Simulation Viewport Toolbar (Controls for perspective, time of day, weather)
-    tcol1, tcol2, tcol3 = st.columns([1.2, 1.0, 1.0])
-    with tcol1:
-        view_angle = st.selectbox(
-            "Simulation Viewport Mode",
-            ["Overhead 2D Orthographic (Tactical)", "Isometric 3D Perspective", "Driver Eye Level", "Pedestrian Crossing Eye"],
-            index=0,
-            help="Select the digital twin rendering perspective for Stage 3.",
-        )
-    with tcol2:
-        lighting = st.selectbox(
-            "Lighting & Time of Day",
-            ["Night Surveillance (Cyber Glow)", "Daylight Clear", "Dusk / Sunset", "Precipitation / Fog"],
-            index=0,
-        )
-    with tcol3:
-        playback_rate = st.selectbox(
-            "Simulation Step Rate",
-            ["1.0x (Real-Time Synchronous)", "0.5x (Slow-Motion Audit)", "2.0x (Accelerated Scenario)", "Step-by-Step"],
-            index=0,
+    # Informative banner if no video processed yet
+    if not has_processed:
+        render_empty_state_card(
+            icon_symbol="🏙️",
+            title="Awaiting Video Processing Telemetry",
+            description="Bloom City's vehicles, pedestrians, and signals are directly driven by real-world detections. Upload footage and click 'Process Uploaded Video' in the AI Vision Monitor to synchronize the digital twin.",
+            stage_tag="Standby Mode",
         )
 
-    st.write("")
+    # Simulation Controls Toolbar
+    scol1, scol2, scol3, scol4 = st.columns([1.2, 1.0, 1.0, 1.2])
 
-    # Dedicated Large Simulation Workspace Canvas
-    st.markdown(
-        f"""
-        <div class="hud-corner-box" style="min-height: 440px; display: flex; flex-direction: column; justify-content: center; align-items: center; background: radial-gradient(circle at center, rgba(17, 24, 39, 0.9) 0%, rgba(8, 12, 20, 0.98) 100%);">
-            <!-- Simulated Intersection Schematic Wireframe -->
-            <div style="position: absolute; inset: 0; pointer-events: none; opacity: 0.45; background-image: 
-                radial-gradient(circle at 50% 50%, rgba(0, 240, 255, 0.15) 0%, transparent 60%),
-                linear-gradient(rgba(0, 240, 255, 0.05) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0, 240, 255, 0.05) 1px, transparent 1px);
-                background-size: 100% 100%, 30px 30px, 30px 30px;">
-            </div>
-
-            <!-- Central HUD Graphic -->
-            <div style="z-index: 2; text-align: center; max-width: 620px; padding: 24px;">
-                <div style="font-family: var(--font-mono); font-size: 0.85rem; color: #00F0FF; letter-spacing: 0.15em; margin-bottom: 8px;">
-                    // BLOOM CITY DIGITAL TWIN WORKSPACE
-                </div>
-                <div style="font-size: 1.4rem; font-weight: 800; color: #F8FAFC; margin-bottom: 12px; letter-spacing: 0.04em;">
-                    SECTOR 7: INTERSECTION KINETIC SIMULATOR
-                </div>
-                <p style="font-size: 0.85rem; color: #94A3B8; line-height: 1.6; margin-bottom: 20px;">
-                    This dedicated simulation canvas is prepared for real-time 2D/3D intersection animation in Stage 3.
-                    It will visualize vehicles approaching stop lines, pedestrian agent clusters gathering at waiting curbs,
-                    and dynamic signal phase transitions commanded by CrossGuard's adaptive policy engine.
-                </p>
-                <div style="display: flex; justify-content: center; gap: 12px; flex-wrap: wrap;">
-                    <span class="status-pill cyan">VIEW: {view_angle.split('(')[0].strip().upper()}</span>
-                    <span class="status-pill lavender">LIGHTING: {lighting.split('(')[0].strip().upper()}</span>
-                    <span class="status-pill warning">SIMULATION ENGINE: STAGE 3</span>
-                </div>
-            </div>
-
-            <!-- Corner Telemetry Markers -->
-            <div style="position: absolute; bottom: 12px; left: 16px; font-family: var(--font-mono); font-size: 0.72rem; color: #64748B;">
-                LAT/LON: 37.7749° N, 122.4194° W | NODE ID: BC-SEC07-INT01
-            </div>
-            <div style="position: absolute; bottom: 12px; right: 16px; font-family: var(--font-mono); font-size: 0.72rem; color: #64748B;">
-                PHYSICS STEP: 60Hz | AGENTS: 0 ACTIVE
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.write("")
-
-    # Digital Twin Real-Time Entity Counts (Strictly Unavailable / No Fake Data)
-    render_hud_header(
-        title="Simulation Entity & Safety Assertions",
-        subtitle="Kinetic physics telemetry (Awaiting Stage 3 Simulator Engine)",
-        badge_text="TELEMETRY OFFLINE",
-        badge_type="neutral",
-    )
-
-    scol1, scol2, scol3, scol4 = st.columns(4)
     with scol1:
+        step_sim = st.button("⏩ Advance Simulation Tick (0.5s)")
+
+    with scol2:
+        speed_mult = st.selectbox("Simulation Speed", ["1.0x (Real-time)", "0.5x (Slow-mo)", "2.0x (Fast)"], index=0)
+
+    with scol3:
+        night_toggle = st.toggle("🌙 Night Cyber Glow Mode", value=False)
+
+    with scol4:
+        if st.button("🔄 Reset Digital Twin"):
+            bloom_engine.pedestrians.clear()
+            bloom_engine.vehicles.clear()
+            st.success("Bloom City entities reset.")
+
+    # Execute simulation tick if requested
+    dt = 0.5
+    if speed_mult.startswith("0.5"):
+        dt = 0.25
+    elif speed_mult.startswith("2.0"):
+        dt = 1.0
+
+    if step_sim:
+        bloom_engine.sync(
+            snapshot,
+            decision,
+            delta_time=dt,
+            night_mode=night_toggle,
+            unique_vehicle_count=session.diagnostics.unique_vehicles_count,
+            unique_pedestrian_count=session.diagnostics.unique_pedestrians_count,
+        )
+    else:
+        # Keep engine synchronized with latest telemetry
+        bloom_engine.sync(
+            snapshot,
+            decision,
+            delta_time=0.05,
+            night_mode=night_toggle,
+            unique_vehicle_count=session.diagnostics.unique_vehicles_count,
+            unique_pedestrian_count=session.diagnostics.unique_pedestrians_count,
+        )
+
+    st.write("")
+
+    # Dedicated Simulation Viewport
+    svg_canvas = bloom_engine.render_svg()
+    render_html(
+        f"""
+        <div class="hud-corner-box" style="padding: 12px; display: flex; flex-direction: column; align-items: center;">
+            {svg_canvas}
+        </div>
+        """
+    )
+
+    st.write("")
+
+    # Real-Time Digital Twin Telemetry Counters
+    render_hud_header(
+        title="Digital Twin Kinetic Telemetry",
+        subtitle="Simulated representative agents synchronized with computer vision spatial occupancy",
+        badge_text="AGENT TELEMETRY",
+        badge_type="cyan",
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
         render_metric_card(
             label="SIMULATED VEHICLES",
-            value="--",
-            unit="FLOW",
-            subtext="Stage 3 Physics Engine",
-            status_color="muted",
+            value=str(len(bloom_engine.vehicles)),
+            unit="CARS",
+            subtext=f"Queue density: {snapshot.queue_density_level}",
+            status_color="cyan" if len(bloom_engine.vehicles) > 0 else "muted",
         )
-    with scol2:
+    with m2:
         render_metric_card(
             label="SIMULATED PEDESTRIANS",
-            value="--",
-            unit="PEDS",
-            subtext="Stage 3 Agent Spawner",
-            status_color="muted",
+            value=str(len(bloom_engine.pedestrians)),
+            unit="AGENTS",
+            subtext=f"Waiting: {snapshot.waiting_pedestrians_count} | Crossing: {snapshot.crossing_pedestrians_count}",
+            status_color="lavender" if len(bloom_engine.pedestrians) > 0 else "muted",
         )
-    with scol3:
+    with m3:
+        stopped_count = sum(1 for v in bloom_engine.vehicles if v.is_stopped)
         render_metric_card(
-            label="CLEARANCE TIME MARGIN",
-            value="--",
-            unit="SEC",
-            subtext="Safety Interlock Buffer",
-            status_color="muted",
+            label="VEHICLES STOPPED",
+            value=str(stopped_count),
+            unit="UNITS",
+            subtext="At Stop Bar (Red / Pedestrian Conflict)",
+            status_color="warning" if stopped_count > 0 else "active",
         )
-    with scol4:
+    with m4:
+        c_status = "OCCUPIED" if snapshot.crosswalk_occupied else "CLEAR"
         render_metric_card(
-            label="CONFLICT SEVERITY",
-            value="--",
-            unit="TTC",
-            subtext="Time-to-Collision Index",
-            status_color="muted",
+            label="CROSSING RESERVATION",
+            value=c_status,
+            unit="",
+            subtext="Conflicting Vehicles Held" if snapshot.crosswalk_occupied else "Safe for Transit",
+            status_color="warning" if snapshot.crosswalk_occupied else "active",
         )

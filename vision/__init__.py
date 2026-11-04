@@ -1,0 +1,1 @@
+"""CrossGuard Vision Pipeline Package"""

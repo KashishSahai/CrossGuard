@@ -540,3 +540,14 @@ header {visibility: visible;}
 ::-webkit-scrollbar-thumb:hover {
     background: var(--neon-cyan);
 }
+
+/* Ensure st.html and tech containers span full width without clipping */
+[data-testid="stHtml"], .stHtml {
+    width: 100%;
+}
+
+.table-responsive-wrapper {
+    width: 100%;
+    overflow-x: auto;
+}
+
