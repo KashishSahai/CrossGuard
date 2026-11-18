@@ -1,0 +1,10 @@
+streamlit>=1.32
+pytest>=8.0
+python-dotenv>=1.0.0
+
+# Computer Vision & Perception dependencies (Step 9)
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+
+# optional: enables the real-browser rendering test in tests/test_bloom_city_browser.py
+# playwright>=1.44   (then: python -m playwright install chromium)

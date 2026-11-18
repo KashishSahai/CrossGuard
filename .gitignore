@@ -1,0 +1,73 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Pytest / Test runner artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+
+# Machine learning model weights
+*.pt
+*.pth
+*.onnx
+*.bin
+*.weights
+*.safetensors
+*.engine
+yolov8n.pt
+
+# Video and large media files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.flv
+*.wmv
+
+# Generated test images, debug frames, and logs
+*.jpg
+*.jpeg
+*.png
+*.csv
+*.log
+
+# Generated validation outputs and upload folders
+tools/uploads/
+tools/*.json
+
+# IDE / Editor configuration
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS artifacts
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
