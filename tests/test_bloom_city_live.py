@@ -30,6 +30,7 @@ from simulation.controller_bridge import BloomCitySignalState, map_controller_st
 from simulation.live_adapter import (
     APPROACH_TO_INDEX,
     BloomCityLiveAdapter,
+    PHASE_ORDER,
 )
 from simulation.simulation_agents import (
     PedestrianState,
@@ -637,4 +638,102 @@ def test_50s_video_simulation_transitions():
 
     # Safety invariant holds
     assert adapter.is_safe
+
+
+# -----------------------------------------------------------------------------
+# Test 14: Short Video Reaching EOF Continues Controller Episode & FSM Phases
+# -----------------------------------------------------------------------------
+def test_short_video_eof_continues_fsm_and_completes_pedestrian_cycle():
+    """Verify that a short video (e.g. 48 frames, ~2s) ending at VEHICLE_GREEN with
+    waiting pedestrians does NOT freeze or terminate Bloom City.
+
+    The simulation continues through the complete sequence:
+    VEHICLE_GREEN -> VEHICLE_YELLOW -> ALL_RED_CLEARANCE -> PEDESTRIAN_WALK -> PEDESTRIAN_CLEARANCE -> VEHICLE_GREEN,
+    and all pedestrians complete their crossings.
+    """
+    adapter = BloomCityLiveAdapter(seed=42)
+    det1 = SpatialDetection(
+        track_id=801,
+        class_id=0,
+        class_name="person",
+        confidence=0.92,
+        bbox=(500, 200, 520, 260),
+        center=(510, 230),
+        bottom_center=(510, 260),
+        spatial_point=(620, 266),
+        zone=SpatialZone.EAST_WAITING,
+        approach=Approach.EAST,
+        zone_type=ZoneType.WAITING,
+        frame_index=0,
+    )
+    det2 = SpatialDetection(
+        track_id=802,
+        class_id=0,
+        class_name="person",
+        confidence=0.88,
+        bbox=(480, 200, 500, 260),
+        center=(490, 230),
+        bottom_center=(490, 260),
+        spatial_point=(625, 270),
+        zone=SpatialZone.EAST_WAITING,
+        approach=Approach.EAST,
+        zone_type=ZoneType.WAITING,
+        frame_index=0,
+    )
+
+    # Process 48 frames (~2 seconds of video), ending while VEHICLE_GREEN with 2 waiting
+    for f in range(48):
+        t = f / 24.0
+        res = _make_frame_result(
+            frame_index=f,
+            timestamp=t,
+            dt=1.0 / 24.0,
+            current_phase=Phase.VEHICLE_GREEN,
+            vehicle_signal=VehicleSignal.GREEN,
+            pedestrian_signal=PedestrianSignal.DONT_WALK,
+            waiting_pedestrians=2,
+            spatial_detections=[det1, det2],
+        )
+        adapter.process_frame_result(res, video_name="short_clip_48f.mp4")
+
+    # At EOF (frame 48): Video observation ends while VEHICLE_GREEN with 8s left of green
+    assert adapter.current_phase == Phase.VEHICLE_GREEN
+    assert adapter.waiting_pedestrians_count == 2
+    assert adapter.should_continue_episode() is True
+
+    initial_frames_count = len(adapter.recorded_frames)
+
+    # Run continuation episode
+    cont_frames = adapter.continue_simulation_episode(max_duration=60.0, dt=0.05)
+    assert len(cont_frames) > 0
+    assert len(adapter.recorded_frames) > initial_frames_count
+
+    # Verify that all continuation frames are flagged
+    assert all(f.get("is_continuation") is True for f in cont_frames)
+
+    # Verify complete FSM cycle progression
+    phases_visited = [PHASE_ORDER[f["ph"]] for f in cont_frames]
+    unique_sequence = []
+    for p in phases_visited:
+        if not unique_sequence or unique_sequence[-1] != p:
+            unique_sequence.append(p)
+
+    expected_sequence = [
+        Phase.VEHICLE_GREEN,
+        Phase.VEHICLE_YELLOW,
+        Phase.ALL_RED_CLEARANCE,
+        Phase.PEDESTRIAN_WALK,
+        Phase.PEDESTRIAN_CLEARANCE,
+        Phase.VEHICLE_GREEN,
+    ]
+    assert unique_sequence == expected_sequence, f"Actual sequence: {unique_sequence}"
+
+    # Verify all waiting pedestrians finished crossing
+    assert len(adapter.completed_pedestrians) == 2
+    assert adapter.waiting_pedestrians_count == 0
+    assert adapter.crossing_pedestrians_count == 0
+    assert adapter.current_phase == Phase.VEHICLE_GREEN
+
+    # After completion, episode should not continue further
+    assert adapter.should_continue_episode() is False
 

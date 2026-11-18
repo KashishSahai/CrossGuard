@@ -100,6 +100,7 @@ class BloomCityLiveAdapter(BloomCityEngine):
         self.initial_timestamp: Optional[float] = None
         self.approaching: int = 0
         self.completed_pedestrians: List[PedestrianAgent] = []
+        self.is_in_continuation: bool = False
         self._init_live_agents()
 
     def reset(self) -> None:
@@ -113,6 +114,7 @@ class BloomCityLiveAdapter(BloomCityEngine):
         self.initial_timestamp = None
         self.approaching = 0
         self.completed_pedestrians = []
+        self.is_in_continuation = False
         self._init_live_agents()
 
     def _init_live_agents(self) -> None:
@@ -549,7 +551,7 @@ class BloomCityLiveAdapter(BloomCityEngine):
     # -------------------------------------------------------------------------
     # Frame Recording
     # -------------------------------------------------------------------------
-    def _record_current_frame(self, force: bool = True) -> dict:
+    def _record_current_frame(self, force: bool = True, is_continuation: bool = False) -> dict:
         """Record the current simulation state into recorded_frames."""
         if self.initial_timestamp is None:
             self.initial_timestamp = self.time
@@ -621,6 +623,7 @@ class BloomCityLiveAdapter(BloomCityEngine):
             "lw": round(float(d.longest_pedestrian_wait_s), 1) if d else 0.0,
             "vt": round(float(self.time), 3),
             "frame_index": self.last_frame_index,
+            "is_continuation": is_continuation,
             "v": veh,
             "p": ped,
         }
@@ -643,8 +646,9 @@ class BloomCityLiveAdapter(BloomCityEngine):
 
         Returns True if:
         1. A pedestrian phase is active or in transition (yellow, all-red, walk, clearance).
-        2. Any representative pedestrian is currently crossing or clearing.
-        3. Pedestrians are waiting and vehicle green has elapsed (or is within 1.0s of expiring).
+        2. Any representative pedestrian is currently entering, crossing, or clearing.
+        3. Pedestrians are waiting (demand exists to be serviced).
+        4. Telemetry demand snapshot indicated waiting or crossing pedestrians.
         """
         # 1. Controller is in active pedestrian or transition phase
         if self.ctrl.current_phase != Phase.VEHICLE_GREEN:
@@ -654,18 +658,20 @@ class BloomCityLiveAdapter(BloomCityEngine):
         if any(p.state in (PedestrianState.ENTERING, PedestrianState.CROSSING, PedestrianState.CLEARING) for p in self.pedestrians):
             return True
 
-        # 3. Pedestrians are waiting and min vehicle green is elapsed or close to expiring
+        # 3. Pedestrians are waiting to cross (unserviced demand)
         waiting_count = sum(1 for p in self.pedestrians if p.state == PedestrianState.WAITING)
         if waiting_count > 0:
-            left_green = self.controller.config.min_vehicle_green - self.controller._elapsed
-            if left_green <= 1.0:
-                return True
+            return True
+
+        # 4. Telemetry snapshot indicated unserviced waiting or crossing pedestrians
+        if self.demand is not None and (self.demand.pedestrians_waiting > 0 or self.demand.pedestrians_in_crosswalk > 0):
+            return True
 
         return False
 
     def continue_simulation_episode(
         self,
-        max_duration: float = 35.0,
+        max_duration: float = 60.0,
         dt: Optional[float] = None,
     ) -> List[dict]:
         """Continue the active controller episode after video observation ends.
@@ -678,6 +684,7 @@ class BloomCityLiveAdapter(BloomCityEngine):
         if not self.should_continue_episode():
             return []
 
+        self.is_in_continuation = True
         step_dt = dt if dt is not None else (1.0 / self.target_fps)
         initial_time = self.time
         continuation_frames: List[dict] = []
@@ -747,7 +754,7 @@ class BloomCityLiveAdapter(BloomCityEngine):
             self._update_vehicles(step_dt)
 
             # 5. Record frame
-            frame_dict = self._record_current_frame(force=True)
+            frame_dict = self._record_current_frame(force=True, is_continuation=True)
             continuation_frames.append(frame_dict)
 
             # 6. Check termination condition

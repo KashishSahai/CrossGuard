@@ -71,6 +71,16 @@ st.set_page_config(
 st.markdown(
     """
 <style>
+/* Base Typography & Root Scaling: Normalize 1rem to 14px across all environments */
+html {
+    font-size: 14px !important;
+    -webkit-text-size-adjust: 100%;
+}
+body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
+    font-size: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
 /* Page Layout */
 .block-container {
     padding-top: 1.2rem;
@@ -305,11 +315,12 @@ def sync_bloom_city_with_signal(
 
         # Authority guard: if the newest recorded frame disagrees with the authoritative signal
         # state (stale adapter), the signal state wins for that frame - never the other way round.
+        # Guard does not overwrite post-EOF simulation continuation frames.
         last = frames[-1]
         vs_i = ("GREEN", "YELLOW", "RED").index(signal_state.vehicle_signal.value)
         ps_i = ("DONT_WALK", "WALK", "CLEARING").index(signal_state.pedestrian_signal.value)
         ph_i = PHASE_ORDER.index(signal_state.phase)
-        if last.get("frame_index") == live_adapter.last_frame_index and (last["ph"], last["vs"], last["ps"]) != (ph_i, vs_i, ps_i):
+        if not last.get("is_continuation") and last.get("frame_index") == live_adapter.last_frame_index and (last["ph"], last["vs"], last["ps"]) != (ph_i, vs_i, ps_i):
             if signal_state.decision_reason not in live_reasons:
                 live_reasons.append(signal_state.decision_reason)
             dec_v = signal_state.decision.value if signal_state.decision in Decision else "FIXED_TIME_FALLBACK"
@@ -371,6 +382,54 @@ def sync_bloom_city_with_signal(
         source_note="Signals mirror the live controller; agents are placeholders until frames are processed",
     )
     return frames, live_reasons, html
+
+
+# -----------------------------------------------------------------------------
+# Preset Video Asset Management & Caching
+# -----------------------------------------------------------------------------
+DEFAULT_PRESET_PATH = "tools/intersection_50s.mp4"
+DEFAULT_PRESET_LABEL = "tools/intersection_50s.mp4 (50s Four-Way Traffic)"
+DEFAULT_PRESET_URL = os.environ.get(
+    "CROSSGUARD_PRESET_VIDEO_URL",
+    "https://github.com/KashishSahai/CrossGuard/releases/download/v1.0.0-assets/intersection_50s.mp4",
+)
+
+
+def ensure_preset_video(path: str = DEFAULT_PRESET_PATH) -> bool:
+    """Ensure the canonical preset video exists locally.
+
+    If running in a clean deployment where large binary assets are not committed,
+    downloads the video on demand from GitHub Release storage or configured URL.
+    """
+    if os.path.exists(path) and os.path.getsize(path) > 1000000:
+        return True
+    url = DEFAULT_PRESET_URL
+    if not url or path != DEFAULT_PRESET_PATH:
+        return False
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    temp_path = path + ".tmp"
+    try:
+        import urllib.request
+        with st.spinner("Downloading canonical preset traffic video (50s Four-Way Traffic)…"):
+            req = urllib.request.Request(url, headers={"User-Agent": "CrossGuard/1.0"})
+            with urllib.request.urlopen(req, timeout=90) as resp, open(temp_path, "wb") as out_file:
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out_file.write(chunk)
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 1000000:
+                os.replace(temp_path, path)
+                return True
+    except Exception as exc:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+        st.error(f"Failed to load preset video asset: {exc}")
+        return False
+    return os.path.exists(path) and os.path.getsize(path) > 0
 
 
 # -----------------------------------------------------------------------------
@@ -592,18 +651,17 @@ with st.sidebar:
     selected_video_path: Optional[str] = None
 
     if input_mode == "Preset Video":
-        preset_options = [
-            "tools/intersection_50s.mp4 (50s Four-Way Traffic)",
-            "tools/uploads/gemini_generated_video_f9c39c5e.mp4 (Urban Four-Way Crosswalks)",
-            "97885-649761107.mp4 (Drone Overhead Intersection)",
-        ]
-        available_presets = [p for p in preset_options if os.path.exists(p.split(" ")[0])]
+        preset_options = [DEFAULT_PRESET_LABEL]
+        if os.path.exists("tools/uploads/97885-649761107.mp4"):
+            preset_options.append("tools/uploads/97885-649761107.mp4 (Drone Overhead Intersection)")
         preset_choice = st.selectbox(
             "Preset Clip",
-            available_presets if available_presets else preset_options,
+            preset_options,
             index=0,
         )
         selected_video_path = preset_choice.split(" ")[0]
+        if selected_video_path == DEFAULT_PRESET_PATH:
+            ensure_preset_video(selected_video_path)
     else:
         uploaded_file = st.file_uploader(
             "Upload Traffic Video (.mp4, .avi, .mov)",
@@ -1120,75 +1178,76 @@ elif nav == "Live Vision":
 
         # LEFT COLUMN — Video / Vision Monitor
         with col_monitor:
-            st.markdown("#### Perception Monitor")
+            tab_monitor, tab_player = st.tabs(["Perception Stream", "Source Video Playback"])
 
-            annotated_frame = st.session_state.get("live_vision_annotated_frame")
-            active_res: Optional[PipelineFrameResult] = st.session_state.get("live_vision_result")
+            with tab_monitor:
+                annotated_frame = st.session_state.get("live_vision_annotated_frame")
+                active_res: Optional[PipelineFrameResult] = st.session_state.get("live_vision_result")
 
-            if active_res is not None:
-                disp_frame = annotated_frame
-                if disp_frame is None and active_res.annotated_frame is not None:
-                    disp_frame = cv2.cvtColor(active_res.annotated_frame, cv2.COLOR_BGR2RGB)
+                if active_res is not None:
+                    disp_frame = annotated_frame
+                    if disp_frame is None and active_res.annotated_frame is not None:
+                        disp_frame = cv2.cvtColor(active_res.annotated_frame, cv2.COLOR_BGR2RGB)
 
-                if disp_frame is not None:
-                    st.image(disp_frame, use_container_width=True)
-                    st.caption(
-                        f"**Frame**: {active_res.frame_index} / {v_info['total_frames']} &bull; "
-                        f"**Timestamp**: {active_res.timestamp:.2f}s &bull; "
-                        f"**Tracked Detections**: {active_res.num_tracked_objects} &bull; "
-                        f"**Calibration**: {calib_label} &bull; "
-                        f"**Device**: {pipeline.device.upper() if pipeline else 'N/A'}"
-                    )
+                    if disp_frame is not None:
+                        st.image(disp_frame, use_container_width=True)
+                        st.caption(
+                            f"**Frame**: {active_res.frame_index} / {v_info['total_frames']} &bull; "
+                            f"**Timestamp**: {active_res.timestamp:.2f}s &bull; "
+                            f"**Tracked Detections**: {active_res.num_tracked_objects} &bull; "
+                            f"**Calibration**: {calib_label} &bull; "
+                            f"**Device**: {pipeline.device.upper() if pipeline else 'N/A'}"
+                        )
+                    else:
+                        preview = get_preview_frame(selected_video_path)
+                        if preview is not None:
+                            st.image(preview, use_container_width=True)
                 else:
                     preview = get_preview_frame(selected_video_path)
                     if preview is not None:
                         st.image(preview, use_container_width=True)
-            else:
-                preview = get_preview_frame(selected_video_path)
-                if preview is not None:
-                    st.image(preview, use_container_width=True)
-                    st.info(
-                        "ℹ️ **Ready to analyze.** Click **Run Sequence** or **Step 1 Frame** to start the closed-loop pipeline."
-                    )
-                else:
-                    st.warning("Unable to extract video frame preview.")
+                        st.info(
+                            "ℹ️ **Ready to analyze.** Click **Run Sequence** or **Step 1 Frame** to start the closed-loop pipeline."
+                        )
+                    else:
+                        st.warning("Unable to extract video frame preview.")
 
-            # Perception Overlay Legend
-            st.markdown(
-                """
-            <div class="cg-legend">
-                <div class="cg-legend-item"><span class="cg-legend-dot" style="background:#00a5ff;"></span> Pedestrian Waiting</div>
-                <div class="cg-legend-item"><span class="cg-legend-dot" style="background:#ffd700;"></span> Pedestrian Crossing</div>
-                <div class="cg-legend-item"><span class="cg-legend-dot" style="background:#32cd32;"></span> Vehicle Approach</div>
-                <div class="cg-legend-item"><span class="cg-legend-dot" style="background:#b469ff;"></span> Vehicle Queue</div>
-                <div class="cg-legend-item"><span class="cg-legend-dot" style="background:#a0a0a0;"></span> Other / Unzoned</div>
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
+                # Perception Overlay Legend
+                st.markdown(
+                    """
+                <div class="cg-legend">
+                    <div class="cg-legend-item"><span class="cg-legend-dot" style="background:#00a5ff;"></span> Pedestrian Waiting</div>
+                    <div class="cg-legend-item"><span class="cg-legend-dot" style="background:#ffd700;"></span> Pedestrian Crossing</div>
+                    <div class="cg-legend-item"><span class="cg-legend-dot" style="background:#32cd32;"></span> Vehicle Approach</div>
+                    <div class="cg-legend-item"><span class="cg-legend-dot" style="background:#b469ff;"></span> Vehicle Queue</div>
+                    <div class="cg-legend-item"><span class="cg-legend-dot" style="background:#a0a0a0;"></span> Other / Unzoned</div>
+                </div>
+                """,
+                    unsafe_allow_html=True,
+                )
 
-            # Live Detection & Tracking Diagnostic Inspector
-            if pipeline is not None and active_res is not None:
-                with st.expander("🔍 Pipeline Frame Diagnostics & Tracking Trace", expanded=False):
-                    diag = pipeline.get_last_frame_diagnostics()
-                    d_raw = diag.get("raw_detection_count", 0)
-                    d_classes = diag.get("raw_class_counts", {})
-                    class_summary = ", ".join(f"{cls}={cnt}" for cls, cnt in sorted(d_classes.items())) if d_classes else "none"
+                # Live Detection & Tracking Diagnostic Inspector
+                if pipeline is not None and active_res is not None:
+                    with st.expander("🔍 Pipeline Frame Diagnostics & Tracking Trace", expanded=False):
+                        diag = pipeline.get_last_frame_diagnostics()
+                        d_raw = diag.get("raw_detection_count", 0)
+                        d_classes = diag.get("raw_class_counts", {})
+                        class_summary = ", ".join(f"{cls}={cnt}" for cls, cnt in sorted(d_classes.items())) if d_classes else "none"
 
-                    # Non-zero spatial zones
-                    z_counts = {}
-                    for s in active_res.spatial_detections:
-                        if s.zone != SpatialZone.NONE:
-                            z_counts[s.zone.value] = z_counts.get(s.zone.value, 0) + 1
-                    spatial_summary = ", ".join(f"{z}={cnt}" for z, cnt in sorted(z_counts.items())) if z_counts else "None"
+                        # Non-zero spatial zones
+                        z_counts = {}
+                        for s in active_res.spatial_detections:
+                            if s.zone != SpatialZone.NONE:
+                                z_counts[s.zone.value] = z_counts.get(s.zone.value, 0) + 1
+                        spatial_summary = ", ".join(f"{z}={cnt}" for z, cnt in sorted(z_counts.items())) if z_counts else "None"
 
-                    diag_dv = live_demand_view(active_res)
-                    # Pedestrian vs vehicle tracks
-                    p_tracks = sum(1 for t in active_res.tracked_detections if t.class_name == "person")
-                    v_tracks = sum(1 for t in active_res.tracked_detections if t.class_name != "person")
+                        diag_dv = live_demand_view(active_res)
+                        # Pedestrian vs vehicle tracks
+                        p_tracks = sum(1 for t in active_res.tracked_detections if t.class_name == "person")
+                        v_tracks = sum(1 for t in active_res.tracked_detections if t.class_name != "person")
 
-                    st.markdown(
-                        f"""
+                        st.markdown(
+                            f"""
 ```text
 Frame: {active_res.frame_index} ({active_res.timestamp:.2f}s)
 
@@ -1214,8 +1273,20 @@ Bridge:
 Bloom City:
 LIVE CONTROLLER MODE, phase={active_res.signal_state.phase.value}, vehicle={active_res.signal_state.vehicle_signal.value}, pedestrian={active_res.signal_state.pedestrian_signal.value}
 ```
-                        """
+                            """
+                        )
+
+            with tab_player:
+                st.markdown("##### Source Video Asset Playback")
+                if selected_video_path and os.path.exists(selected_video_path):
+                    st.video(selected_video_path)
+                    st.caption(
+                        f"**Asset**: `{os.path.basename(selected_video_path)}` &bull; "
+                        f"{v_info['width']} \u00d7 {v_info['height']} @ {v_info['fps']:.2f} fps &bull; "
+                        f"Native HTML5 player"
                     )
+                else:
+                    st.warning("Video asset not available locally.")
 
         # RIGHT COLUMN — Live System State
         with col_state:
